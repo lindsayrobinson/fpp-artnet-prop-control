@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include "Plugin.h"
 #include "Player.h"
@@ -22,6 +25,9 @@
 //
 // When FPP is idle, both modes output the desk-selected solid RGB colour so
 // the props can be used directly from the lighting console with no sequence.
+// FPP Effects/overlays are detected by comparing the channel frame immediately
+// before overlays with the final frame after overlays.  This allows an Effect
+// to act as the pattern source even though Player::IsPlaying() is false.
 //
 // In all cases the per-prop dimmer is applied after colour selection and the
 // global master dimmer is ALWAYS the final operation.
@@ -55,12 +61,14 @@ public:
 
     // FPP merges live Art-Net/E1.31/DDP bridge data before this callback.
     // Capture the control slots here so sequence playback cannot hide or
-    // replace them later in the processing pipeline.
+    // replace them later in the processing pipeline.  Also snapshot the two
+    // prop ranges BEFORE FPP applies legacy Effects and Pixel Overlays.
     void modifySequenceData(int /*ms*/, uint8_t* data) override {
         if (data == nullptr || bypass_.load(std::memory_order_relaxed)) {
             return;
         }
         captureControls(data);
+        snapshotPreOverlayData(data);
     }
 
     void modifyChannelData(int /*ms*/, uint8_t* data) override {
@@ -92,19 +100,49 @@ public:
 
         const bool sequencePlaying = Player::INSTANCE.IsPlaying();
 
+        // modifyChannelData() runs after FPP Effects/Pixel Overlays.  Compare
+        // this final frame with the snapshot taken in modifySequenceData().
+        // If an overlay changed a prop, keep treating that prop as having an
+        // active pattern source for a short hold period.  The hold preserves
+        // intentional black frames inside an effect and lets the prop return
+        // to solid desk colour shortly after the effect stops.
+        const int64_t now = steadyNowMs();
+        const bool lettersOverlayChanged = overlayChanged(
+            data,
+            lettersStartChannel_.load(std::memory_order_relaxed),
+            lettersPixels_.load(std::memory_order_relaxed),
+            true);
+        const bool festoonOverlayChanged = overlayChanged(
+            data,
+            festoonStartChannel_.load(std::memory_order_relaxed),
+            festoonPixels_.load(std::memory_order_relaxed),
+            false);
+
+        if (lettersOverlayChanged) {
+            lettersOverlayUntilMs_.store(now + kOverlayHoldMs, std::memory_order_relaxed);
+        }
+        if (festoonOverlayChanged) {
+            festoonOverlayUntilMs_.store(now + kOverlayHoldMs, std::memory_order_relaxed);
+        }
+
+        const bool lettersPatternActive = sequencePlaying ||
+            now <= lettersOverlayUntilMs_.load(std::memory_order_relaxed);
+        const bool festoonPatternActive = sequencePlaying ||
+            now <= festoonOverlayUntilMs_.load(std::memory_order_relaxed);
+
         processGroup(data,
                      lettersStartChannel_.load(std::memory_order_relaxed),
                      lettersPixels_.load(std::memory_order_relaxed),
                      lettersColorOrder_.load(std::memory_order_relaxed),
                      lettersR, lettersG, lettersB, lettersMode,
-                     lettersDim, master, sequencePlaying);
+                     lettersDim, master, lettersPatternActive);
 
         processGroup(data,
                      festoonStartChannel_.load(std::memory_order_relaxed),
                      festoonPixels_.load(std::memory_order_relaxed),
                      festoonColorOrder_.load(std::memory_order_relaxed),
                      festoonR, festoonG, festoonB, festoonMode,
-                     festoonDim, master, sequencePlaying);
+                     festoonDim, master, festoonPatternActive);
     }
 
     std::function<bool()> shutdown() override {
@@ -120,6 +158,7 @@ protected:
 
 private:
     static constexpr int kMaxChannels = FPPD_MAX_CHANNELS;
+    static constexpr int64_t kOverlayHoldMs = 750;
 
     std::atomic<bool> bypass_{true};
     std::atomic<int> controlBaseChannel_{10001};
@@ -145,6 +184,59 @@ private:
     std::atomic<int> festoonStartChannel_{1};
     std::atomic<int> festoonPixels_{2000};
     std::atomic<int> festoonColorOrder_{0};
+
+    // Pre-overlay snapshots used to detect Effects/Pixel Overlays while the
+    // normal FPP Player is idle.  Access is protected because settings may be
+    // changed from another FPP thread while channel output is active.
+    std::mutex snapshotMutex_;
+    std::vector<uint8_t> lettersPreOverlay_;
+    std::vector<uint8_t> festoonPreOverlay_;
+    std::atomic<int64_t> lettersOverlayUntilMs_{0};
+    std::atomic<int64_t> festoonOverlayUntilMs_{0};
+
+    static int64_t steadyNowMs() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+
+    void snapshotPreOverlayData(const uint8_t* data) {
+        const int lettersStart0 = lettersStartChannel_.load(std::memory_order_relaxed) - 1;
+        const int lettersChannels = lettersPixels_.load(std::memory_order_relaxed) * 3;
+        const int festoonStart0 = festoonStartChannel_.load(std::memory_order_relaxed) - 1;
+        const int festoonChannels = festoonPixels_.load(std::memory_order_relaxed) * 3;
+
+        std::lock_guard<std::mutex> lock(snapshotMutex_);
+
+        if (lettersChannels > 0) {
+            lettersPreOverlay_.assign(data + lettersStart0, data + lettersStart0 + lettersChannels);
+        } else {
+            lettersPreOverlay_.clear();
+        }
+
+        if (festoonChannels > 0) {
+            festoonPreOverlay_.assign(data + festoonStart0, data + festoonStart0 + festoonChannels);
+        } else {
+            festoonPreOverlay_.clear();
+        }
+    }
+
+    bool overlayChanged(const uint8_t* data, int startChannel1, int pixelCount, bool letters) {
+        if (pixelCount <= 0) {
+            return false;
+        }
+
+        const int start0 = startChannel1 - 1;
+        const int channelCount = pixelCount * 3;
+        std::lock_guard<std::mutex> lock(snapshotMutex_);
+        const auto& snapshot = letters ? lettersPreOverlay_ : festoonPreOverlay_;
+
+        if (static_cast<int>(snapshot.size()) != channelCount) {
+            return false;
+        }
+
+        return !std::equal(snapshot.begin(), snapshot.end(), data + start0);
+    }
 
     void captureControls(const uint8_t* data) {
         const int controlBase0 = controlBaseChannel_.load(std::memory_order_relaxed) - 1;
@@ -190,14 +282,14 @@ private:
                              uint16_t colorMode,
                              uint16_t localDimmer,
                              uint16_t master,
-                             bool sequencePlaying) {
+                             bool patternActive) {
         if (pixelCount <= 0) {
             return;
         }
 
         const int start0 = startChannel1 - 1;
         const auto offsets = colorOffsets(colorOrder);
-        const bool fullSequenceColour = sequencePlaying && colorMode < 128;
+        const bool fullSequenceColour = patternActive && colorMode < 128;
 
         for (int pixel = 0; pixel < pixelCount; ++pixel) {
             const int ch = start0 + (pixel * 3);
@@ -207,14 +299,15 @@ private:
             uint16_t b;
 
             if (fullSequenceColour) {
-                // FULL SEQUENCE COLOUR MODE: preserve the xLights/FPP RGB values
-                // exactly and ignore the Art-Net RGB colour sliders.
+                // FULL SOURCE COLOUR MODE: preserve the xLights/FPP sequence or
+                // Effect RGB values exactly and ignore the Art-Net RGB sliders.
                 r = data[ch + offsets[0]];
                 g = data[ch + offsets[1]];
                 b = data[ch + offsets[2]];
-            } else if (sequencePlaying) {
-                // DESK COLOUR OVERRIDE MODE: preserve only the sequence pixel's
-                // intensity/pattern, then paint it with the current Art-Net RGB.
+            } else if (patternActive) {
+                // DESK COLOUR OVERRIDE MODE: preserve only the active sequence
+                // or FPP Effect pixel intensity/pattern, then paint it with the
+                // current Art-Net RGB.
                 const uint16_t seqR = data[ch + offsets[0]];
                 const uint16_t seqG = data[ch + offsets[1]];
                 const uint16_t seqB = data[ch + offsets[2]];
@@ -224,8 +317,8 @@ private:
                 g = scale8(greenLevel, patternLevel);
                 b = scale8(blueLevel,  patternLevel);
             } else {
-                // IDLE: there is no sequence colour/pattern to preserve, so the
-                // desk directly supplies a solid colour across the entire prop.
+                // IDLE: there is no sequence or Effect pattern to preserve, so
+                // the desk directly supplies a solid colour across the prop.
                 r = redLevel;
                 g = greenLevel;
                 b = blueLevel;
