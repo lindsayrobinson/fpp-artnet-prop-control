@@ -58,7 +58,7 @@ public:
         if (data == nullptr || bypass_.load(std::memory_order_relaxed)) {
             return;
         }
-        captureControls(data);
+        captureControls(data, "early");
     }
 
     void modifyChannelData(int /*ms*/, uint8_t* data) override {
@@ -71,7 +71,9 @@ public:
         // values below were latched in modifySequenceData() immediately after
         // FPP merged the live bridge input.
         if (!Player::INSTANCE.IsPlaying()) {
-            captureControls(data);
+            captureControls(data, "late-idle");
+        } else {
+            logRawControlsIfChanged(data, "late-playing");
         }
 
         const uint16_t master = master_.load(std::memory_order_relaxed);
@@ -137,6 +139,8 @@ private:
     std::atomic<uint16_t> festoonG_{255};
     std::atomic<uint16_t> festoonB_{255};
 
+    std::array<std::atomic<uint8_t>, 9> rawLast_{};
+
     std::atomic<int> lettersStartChannel_{6001};
     std::atomic<int> lettersPixels_{149};
     std::atomic<int> lettersColorOrder_{0};
@@ -145,20 +149,68 @@ private:
     std::atomic<int> festoonPixels_{2000};
     std::atomic<int> festoonColorOrder_{0};
 
-    void captureControls(const uint8_t* data) {
+    void captureControls(const uint8_t* data, const char* stage) {
         const int controlBase0 = controlBaseChannel_.load(std::memory_order_relaxed) - 1;
 
-        master_.store(data[controlBase0 + 0], std::memory_order_relaxed);
+        const uint8_t vMaster = data[controlBase0 + 0];
+        const uint8_t vLettersDim = data[controlBase0 + 1];
+        const uint8_t vLettersR = data[controlBase0 + 2];
+        const uint8_t vLettersG = data[controlBase0 + 3];
+        const uint8_t vLettersB = data[controlBase0 + 4];
+        const uint8_t vFestoonDim = data[controlBase0 + 9];
+        const uint8_t vFestoonR = data[controlBase0 + 10];
+        const uint8_t vFestoonG = data[controlBase0 + 11];
+        const uint8_t vFestoonB = data[controlBase0 + 12];
 
-        lettersDim_.store(data[controlBase0 + 1], std::memory_order_relaxed);
-        lettersR_.store(data[controlBase0 + 2], std::memory_order_relaxed);
-        lettersG_.store(data[controlBase0 + 3], std::memory_order_relaxed);
-        lettersB_.store(data[controlBase0 + 4], std::memory_order_relaxed);
+        const bool changed =
+            master_.load(std::memory_order_relaxed) != vMaster ||
+            lettersDim_.load(std::memory_order_relaxed) != vLettersDim ||
+            lettersR_.load(std::memory_order_relaxed) != vLettersR ||
+            lettersG_.load(std::memory_order_relaxed) != vLettersG ||
+            lettersB_.load(std::memory_order_relaxed) != vLettersB ||
+            festoonDim_.load(std::memory_order_relaxed) != vFestoonDim ||
+            festoonR_.load(std::memory_order_relaxed) != vFestoonR ||
+            festoonG_.load(std::memory_order_relaxed) != vFestoonG ||
+            festoonB_.load(std::memory_order_relaxed) != vFestoonB;
 
-        festoonDim_.store(data[controlBase0 + 9], std::memory_order_relaxed);
-        festoonR_.store(data[controlBase0 + 10], std::memory_order_relaxed);
-        festoonG_.store(data[controlBase0 + 11], std::memory_order_relaxed);
-        festoonB_.store(data[controlBase0 + 12], std::memory_order_relaxed);
+        master_.store(vMaster, std::memory_order_relaxed);
+        lettersDim_.store(vLettersDim, std::memory_order_relaxed);
+        lettersR_.store(vLettersR, std::memory_order_relaxed);
+        lettersG_.store(vLettersG, std::memory_order_relaxed);
+        lettersB_.store(vLettersB, std::memory_order_relaxed);
+        festoonDim_.store(vFestoonDim, std::memory_order_relaxed);
+        festoonR_.store(vFestoonR, std::memory_order_relaxed);
+        festoonG_.store(vFestoonG, std::memory_order_relaxed);
+        festoonB_.store(vFestoonB, std::memory_order_relaxed);
+
+        if (changed) {
+            LogInfo(VB_PLUGIN,
+                    "APC controls [%s] playing=%d M=%u Ldim=%u Lrgb=%u/%u/%u Fdim=%u Frgb=%u/%u/%u\n",
+                    stage, Player::INSTANCE.IsPlaying(),
+                    vMaster, vLettersDim, vLettersR, vLettersG, vLettersB,
+                    vFestoonDim, vFestoonR, vFestoonG, vFestoonB);
+        }
+    }
+
+    void logRawControlsIfChanged(const uint8_t* data, const char* stage) {
+        const int base = controlBaseChannel_.load(std::memory_order_relaxed) - 1;
+        std::array<uint8_t, 9> current = {
+            data[base + 0], data[base + 1], data[base + 2], data[base + 3], data[base + 4],
+            data[base + 9], data[base + 10], data[base + 11], data[base + 12]
+        };
+        bool changed = false;
+        for (size_t i = 0; i < current.size(); ++i) {
+            if (rawLast_[i].exchange(current[i], std::memory_order_relaxed) != current[i]) {
+                changed = true;
+            }
+        }
+        if (changed) {
+            LogInfo(VB_PLUGIN,
+                    "APC raw [%s] playing=%d M=%u Ldim=%u Lrgb=%u/%u/%u Fdim=%u Frgb=%u/%u/%u\n",
+                    stage, Player::INSTANCE.IsPlaying(),
+                    current[0], current[1], current[2], current[3], current[4],
+                    current[5], current[6], current[7], current[8]);
+        }
     }
 
     static uint8_t scale8(uint16_t value, uint16_t level) {

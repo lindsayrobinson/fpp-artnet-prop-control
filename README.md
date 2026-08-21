@@ -1,3 +1,7 @@
+# Diagnostic v0.7
+
+This build logs Art-Net control changes at FPP's early post-bridge callback and at the final channel callback while a sequence is playing. Use it to diagnose live fader updates.
+
 # FPP Art-Net Prop Control — FPP 10
 
 A native FPP 10 `ChannelDataPlugin` for controlling two RGB pixel prop groups from a lighting console over Art-Net while optionally preserving xLights/FPP sequence patterns.
