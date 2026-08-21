@@ -96,11 +96,11 @@ private:
     std::atomic<bool> bypass_{true};
     std::atomic<int> controlBaseChannel_{10001};
 
-    std::atomic<int> lettersStartChannel_{1};
+    std::atomic<int> lettersStartChannel_{6001};
     std::atomic<int> lettersPixels_{149};
     std::atomic<int> lettersColorOrder_{0};
 
-    std::atomic<int> festoonStartChannel_{448};
+    std::atomic<int> festoonStartChannel_{1};
     std::atomic<int> festoonPixels_{2000};
     std::atomic<int> festoonColorOrder_{0};
 
@@ -163,11 +163,11 @@ private:
         if (settings.find("APCBypass") == settings.end()) settings["APCBypass"] = "1";
         if (settings.find("APCControlBaseChannel") == settings.end()) settings["APCControlBaseChannel"] = "10001";
 
-        if (settings.find("APCLettersStartChannel") == settings.end()) settings["APCLettersStartChannel"] = "1";
+        if (settings.find("APCLettersStartChannel") == settings.end()) settings["APCLettersStartChannel"] = "6001";
         if (settings.find("APCLettersPixels") == settings.end()) settings["APCLettersPixels"] = "149";
         if (settings.find("APCLettersColorOrder") == settings.end()) settings["APCLettersColorOrder"] = "0";
 
-        if (settings.find("APCFestoonStartChannel") == settings.end()) settings["APCFestoonStartChannel"] = "448";
+        if (settings.find("APCFestoonStartChannel") == settings.end()) settings["APCFestoonStartChannel"] = "1";
         if (settings.find("APCFestoonPixels") == settings.end()) settings["APCFestoonPixels"] = "2000";
         if (settings.find("APCFestoonColorOrder") == settings.end()) settings["APCFestoonColorOrder"] = "0";
     }
@@ -216,14 +216,14 @@ private:
         controlBase = std::clamp(controlBase, 1, kMaxChannels - 12);
         controlBaseChannel_.store(controlBase, std::memory_order_relaxed);
 
-        const int lettersStart = clampStart(settingInt("APCLettersStartChannel", 1));
+        const int lettersStart = clampStart(settingInt("APCLettersStartChannel", 6001));
         const int lettersPixels = clampPixels(settingInt("APCLettersPixels", 149), lettersStart);
         const int lettersOrder = std::clamp(settingInt("APCLettersColorOrder", 0), 0, 5);
         lettersStartChannel_.store(lettersStart, std::memory_order_relaxed);
         lettersPixels_.store(lettersPixels, std::memory_order_relaxed);
         lettersColorOrder_.store(lettersOrder, std::memory_order_relaxed);
 
-        const int festoonStart = clampStart(settingInt("APCFestoonStartChannel", 448));
+        const int festoonStart = clampStart(settingInt("APCFestoonStartChannel", 1));
         const int festoonPixels = clampPixels(settingInt("APCFestoonPixels", 2000), festoonStart);
         const int festoonOrder = std::clamp(settingInt("APCFestoonColorOrder", 0), 0, 5);
         festoonStartChannel_.store(festoonStart, std::memory_order_relaxed);

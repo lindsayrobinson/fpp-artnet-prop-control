@@ -1,7 +1,7 @@
 {
   "repoName": "fpp-artnet-prop-control",
   "name": "Art-Net Prop Control",
-  "author": "Custom",
+  "author": "lindsayrobinson",
   "description": "FPP 10 ChannelDataPlugin applying Art-Net RGB filters, local prop dimmers, and a final global master dimmer to configured RGB pixel ranges.",
   "homeURL": "https://github.com/lindsayrobinson/fpp-artnet-prop-control",
   "srcURL": "https://github.com/lindsayrobinson/fpp-artnet-prop-control.git",
