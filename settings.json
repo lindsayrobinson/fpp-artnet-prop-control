@@ -4,12 +4,11 @@
       "description": "Art-Net Prop Control",
       "settings": [
         "APCBypass",
-        "APCUseSequencePattern",
         "APCControlBaseChannel"
       ]
     },
     "APCLetters": {
-      "description": "Letters \u2014 Art-Net slots 2 brightness, 3 red, 4 green, 5 blue",
+      "description": "Letters — slots 2 brightness, 3 red, 4 green, 5 blue, 6 colour mode",
       "settings": [
         "APCLettersStartChannel",
         "APCLettersPixels",
@@ -17,7 +16,7 @@
       ]
     },
     "APCFestoon": {
-      "description": "Festoon \u2014 Art-Net slots 10 brightness, 11 red, 12 green, 13 blue",
+      "description": "Festoon — slots 10 brightness, 11 red, 12 green, 13 blue, 14 colour mode",
       "settings": [
         "APCFestoonStartChannel",
         "APCFestoonPixels",
@@ -35,23 +34,14 @@
       "restart": 0,
       "reboot": 0
     },
-    "APCUseSequencePattern": {
-      "name": "APCUseSequencePattern",
-      "description": "Use sequence as pattern mask",
-      "tip": "When enabled, an active FPP sequence supplies per-pixel intensity/pattern while Art-Net supplies colour. When FPP is idle, the entire prop uses the Art-Net colour.",
-      "type": "checkbox",
-      "default": 1,
-      "restart": 0,
-      "reboot": 0
-    },
     "APCControlBaseChannel": {
       "name": "APCControlBaseChannel",
       "description": "FPP control start channel",
-      "tip": "FPP channel receiving Art-Net slot 1. Slots 1-13 must map consecutively from here. Recommended: 10001.",
+      "tip": "FPP channel receiving Art-Net slot 1. Slots 1-14 must map consecutively from here. Recommended: 10001.",
       "type": "number",
       "default": 10001,
       "min": 1,
-      "max": 8388596,
+      "max": 8388595,
       "step": 1,
       "restart": 0,
       "reboot": 0

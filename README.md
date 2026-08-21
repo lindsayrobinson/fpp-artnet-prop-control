@@ -1,41 +1,24 @@
-# Diagnostic v0.7
-
-This build logs Art-Net control changes at FPP's early post-bridge callback and at the final channel callback while a sequence is playing. Use it to diagnose live fader updates.
-
 # FPP Art-Net Prop Control — FPP 10
 
-A native FPP 10 `ChannelDataPlugin` for controlling two RGB pixel prop groups from a lighting console over Art-Net while optionally preserving xLights/FPP sequence patterns.
+Native FPP 10 `ChannelDataPlugin` for controlling two RGB pixel prop groups from a lighting console over Art-Net while optionally preserving full xLights/FPP sequence colour independently for each prop.
 
+## v0.8 — independent colour modes
 
-## v0.6 live-control fix
+Each prop now has its own live Art-Net colour-mode channel:
 
-FPP merges live Art-Net/E1.31/DDP bridge data before the `modifySequenceData()` plugin callback. v0.6 latches the nine active control values at that early stage and then uses the latched values in `modifyChannelData()` immediately before output. This is intended to make RGB, local dimmers and the global master react during an active sequence rather than only after playback stops.
+- **Letters mode — Art-Net slot 6**
+- **Festoon mode — Art-Net slot 14**
 
-When FPP is idle, the plugin still refreshes the controls directly from the channel buffer so solid-colour desk control continues to work without a sequence.
+While a sequence is playing:
 
-## Operating behaviour
+- **0-127 = Full Sequence Colour** — preserve the sequence's original RGB values; that prop's Art-Net RGB sliders are ignored. The prop brightness and global Master still apply.
+- **128-255 = Desk Colour Override** — preserve the sequence's per-pixel intensity/pattern using `max(R,G,B)`, but recolour the effect with the prop's Art-Net RGB sliders.
 
-With **Use sequence as pattern mask** enabled (the default):
+When no sequence is running, either mode outputs the desk-selected solid RGB colour across the prop, so the console can light the props directly.
 
-- **When an FPP sequence/player is active:** the sequence controls each pixel's intensity/pattern, while Art-Net controls the actual RGB colour.
-- **When FPP is idle:** every pixel is treated as 100% pattern intensity, so the selected Art-Net colour fills the entire prop even with no sequence running.
-- The prop's local brightness is applied after colour/pattern processing.
-- Art-Net slot 1 **Master** is always applied last across both props.
+The per-prop brightness is always applied after colour selection, and Art-Net slot 1 **Master** is always applied last across both props.
 
-The sequence pattern intensity is calculated as `max(R,G,B)` for each source pixel. This makes any fully saturated sequence colour (red, green, blue, white, etc.) equivalent to 100% intensity, while preserving fades, chases, twinkles and black pixels. The original sequence hue is intentionally discarded.
-
-If **Use sequence as pattern mask** is disabled, both props are always solid Art-Net-selected colours regardless of sequence playback.
-
-## Processing order
-
-For each pixel:
-
-1. Determine pattern intensity: `max(sequence R, G, B)` if a sequence/player is active, otherwise `255`.
-2. Apply that pattern intensity to the Art-Net-selected R/G/B colour.
-3. Apply the prop's local brightness channel.
-4. Apply the global Master channel **last**.
-
-## DMX / Art-Net slot map
+## Art-Net slot map
 
 | Art-Net slot | Function |
 |---:|---|
@@ -44,11 +27,13 @@ For each pixel:
 | 3 | Letters red |
 | 4 | Letters green |
 | 5 | Letters blue |
-| 6-9 | Spare |
+| **6** | **Letters colour mode: 0-127 sequence / 128-255 desk colour** |
+| 7-9 | Spare |
 | 10 | Festoon brightness |
 | 11 | Festoon red |
 | 12 | Festoon green |
 | 13 | Festoon blue |
+| **14** | **Festoon colour mode: 0-127 sequence / 128-255 desk colour** |
 
 ## Confirmed FPP layout
 
@@ -59,44 +44,55 @@ For each pixel:
 With control block start = 10001:
 
 - Art-Net slot 1 -> FPP 10001
-- Art-Net slot 2 -> FPP 10002
-- ...
-- Art-Net slot 13 -> FPP 10013
+- Letters mode slot 6 -> FPP 10006
+- Festoon mode slot 14 -> FPP 10014
 
-## Examples
+Configure the Art-Net Channel Input for at least **14 slots**.
+
+## Behaviour examples
+
+### Letters = full sequence colour, Festoon = desk colour
+
+- Ch 6 = 0
+- Ch 14 = 255
+
+Letters plays its original xLights rainbow/colour effects. Festoon keeps the xLights chase/twinkle/fade pattern but uses Ch 11/12/13 for its live colour.
+
+### Both = full sequence colour
+
+- Ch 6 = 0
+- Ch 14 = 0
+
+Both props use their original sequence colours. Ch 2 and Ch 10 still dim their respective props; Ch 1 remains the global master.
+
+### Both = desk colour override
+
+- Ch 6 = 255
+- Ch 14 = 255
+
+Both props preserve sequence patterns/intensity but are recoloured live from their Art-Net RGB sliders.
 
 ### No sequence running
 
-With Master and prop brightness at 255:
+Colour mode is ignored because there is no sequence source. Each prop displays its desk-selected solid RGB colour, scaled by its local dimmer and the Master.
 
-- Letters R=255, G=0, B=0 -> all 149 Letters pixels solid red
-- Festoon R=0, G=0, B=255 -> all 2,000 Festoon pixels solid blue
+## FPP setting required for live controls during playback
 
-### Sequence running
+Set:
 
-If xLights has a chase where only selected Festoon pixels are lit, and Festoon RGB is set to red at the desk, the output is the same chase pattern in red. Change the desk RGB to blue and the same chase immediately becomes blue.
+**Settings -> Input/Output -> Bridge Data Priority -> Prioritize Bridge**
 
-If xLights fades a pixel from 255 to 128 to 0, the Art-Net-selected colour follows the same 100% -> 50% -> 0% fade.
-
-## FPP Channel Input
-
-Create an Art-Net Channel Input for your chosen universe and map its first slot to FPP channel **10001**. At least the first 13 slots are required. Do not overlap the control block with the prop channel ranges.
+The pixel sequence occupies FPP channels 1-6447 while the Art-Net control block begins at 10001, so the control channels do not overlap the sequence data.
 
 ## Safety / bypass
 
 The plugin installs with **Bypass ON**. Verify your channel ranges and Art-Net input before turning bypass off.
 
-## Art-Net loss behaviour
-
-FPP's bridge input expires when Art-Net stops arriving. This test version reads the merged FPP control channels, so if those reserved channels otherwise contain zero, loss of Art-Net causes the controls to fall to zero and the props black out. This is the current safe failure behaviour.
-
 ## Output to Baldrick8
 
-Send FPP channels 1-6447 to the Baldrick8, preferably using DDP. The plugin modifies FPP's channel buffer before the output stage; the Baldrick8 does not need to know about the Art-Net control channels.
+Send FPP channels 1-6447 to the Baldrick8, preferably using DDP. The Art-Net control channels do not need to be sent to the Baldrick8.
 
 ## Build / update on FPP 10
-
-For an existing Git checkout:
 
 ```bash
 cd /home/fpp/media/plugins/fpp-artnet-prop-control
@@ -105,11 +101,9 @@ git pull
 sudo systemctl restart fppd
 ```
 
-The plugin builds against the FPP 10 headers and `libfpp` on the device.
-
 ## Files
 
-- `src/ArtNetPropControl.cpp` — real-time pattern/colour/dimmer processing
+- `src/ArtNetPropControl.cpp` — real-time colour-mode, pattern and dimmer processing
 - `settings.json` — FPP settings definitions
 - `plugin_setup.php` — settings page
 - `menu.inc` — FPP menu entry
@@ -119,4 +113,4 @@ The plugin builds against the FPP 10 headers and `libfpp` on the device.
 
 ## Status
 
-Custom **v0.5 / FPP 10 test build** for `lindsayrobinson/fpp-artnet-prop-control`.
+Custom **v0.8 / FPP 10** build for `lindsayrobinson/fpp-artnet-prop-control`.

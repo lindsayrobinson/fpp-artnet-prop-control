@@ -14,17 +14,17 @@
 
 // FPP 10 native ChannelDataPlugin.
 //
-// Processing order for each RGB pixel:
-//   1. If FPP is playing, derive a brightness mask from the existing sequence
-//      pixel using max(R,G,B). This preserves patterns/fades while discarding
-//      the sequence hue. If FPP is idle, use a full (255) mask so the desk can
-//      light the entire prop without a sequence.
-//   2. Generate the pixel colour from the Art-Net R/G/B controls and mask it.
-//   3. Apply the per-prop dimmer.
-//   4. Apply the global master dimmer (ALWAYS LAST).
+// Each prop has an independent Art-Net colour mode:
+//   mode 0-127   = FULL SEQUENCE COLOUR. Keep the sequence RGB values and
+//                  ignore that prop's Art-Net RGB sliders while playing.
+//   mode 128-255 = DESK COLOUR OVERRIDE. Keep the sequence per-pixel
+//                  intensity/pattern but recolour it with Art-Net RGB.
 //
-// The lighting desk therefore owns colour at all times, while an active sequence
-// can still own per-pixel pattern/intensity.
+// When FPP is idle, both modes output the desk-selected solid RGB colour so
+// the props can be used directly from the lighting console with no sequence.
+//
+// In all cases the per-prop dimmer is applied after colour selection and the
+// global master dimmer is ALWAYS the final operation.
 //
 // Art-Net slots are expected to be mapped consecutively into FPP starting at
 // APCControlBaseChannel (default FPP channel 10001):
@@ -33,11 +33,13 @@
 //   3  Letters red
 //   4  Letters green
 //   5  Letters blue
-//   6-9 spare
+//   6  Letters colour mode
+//   7-9 spare
 //   10 Festoon dimmer
 //   11 Festoon red
 //   12 Festoon green
 //   13 Festoon blue
+//   14 Festoon colour mode
 
 class ArtNetPropControlPlugin final : public FPPPlugins::Plugin,
                                       public FPPPlugins::ChannelDataPlugin {
@@ -58,7 +60,7 @@ public:
         if (data == nullptr || bypass_.load(std::memory_order_relaxed)) {
             return;
         }
-        captureControls(data, "early");
+        captureControls(data);
     }
 
     void modifyChannelData(int /*ms*/, uint8_t* data) override {
@@ -71,9 +73,7 @@ public:
         // values below were latched in modifySequenceData() immediately after
         // FPP merged the live bridge input.
         if (!Player::INSTANCE.IsPlaying()) {
-            captureControls(data, "late-idle");
-        } else {
-            logRawControlsIfChanged(data, "late-playing");
+            captureControls(data);
         }
 
         const uint16_t master = master_.load(std::memory_order_relaxed);
@@ -82,31 +82,29 @@ public:
         const uint16_t lettersR   = lettersR_.load(std::memory_order_relaxed);
         const uint16_t lettersG   = lettersG_.load(std::memory_order_relaxed);
         const uint16_t lettersB   = lettersB_.load(std::memory_order_relaxed);
+        const uint16_t lettersMode = lettersMode_.load(std::memory_order_relaxed);
 
         const uint16_t festoonDim = festoonDim_.load(std::memory_order_relaxed);
         const uint16_t festoonR   = festoonR_.load(std::memory_order_relaxed);
         const uint16_t festoonG   = festoonG_.load(std::memory_order_relaxed);
         const uint16_t festoonB   = festoonB_.load(std::memory_order_relaxed);
+        const uint16_t festoonMode = festoonMode_.load(std::memory_order_relaxed);
 
-        // When enabled, an active FPP player supplies only per-pixel intensity.
-        // When idle, every pixel receives a full mask so Art-Net can light the
-        // props with no sequence running.
-        const bool useSequenceMask = useSequencePattern_.load(std::memory_order_relaxed) &&
-                                     Player::INSTANCE.IsPlaying();
+        const bool sequencePlaying = Player::INSTANCE.IsPlaying();
 
         processGroup(data,
                      lettersStartChannel_.load(std::memory_order_relaxed),
                      lettersPixels_.load(std::memory_order_relaxed),
                      lettersColorOrder_.load(std::memory_order_relaxed),
-                     lettersR, lettersG, lettersB,
-                     lettersDim, master, useSequenceMask);
+                     lettersR, lettersG, lettersB, lettersMode,
+                     lettersDim, master, sequencePlaying);
 
         processGroup(data,
                      festoonStartChannel_.load(std::memory_order_relaxed),
                      festoonPixels_.load(std::memory_order_relaxed),
                      festoonColorOrder_.load(std::memory_order_relaxed),
-                     festoonR, festoonG, festoonB,
-                     festoonDim, master, useSequenceMask);
+                     festoonR, festoonG, festoonB, festoonMode,
+                     festoonDim, master, sequencePlaying);
     }
 
     std::function<bool()> shutdown() override {
@@ -124,7 +122,6 @@ private:
     static constexpr int kMaxChannels = FPPD_MAX_CHANNELS;
 
     std::atomic<bool> bypass_{true};
-    std::atomic<bool> useSequencePattern_{true};
     std::atomic<int> controlBaseChannel_{10001};
 
     // Latched live control values. Neutral defaults make startup safe until the
@@ -134,12 +131,12 @@ private:
     std::atomic<uint16_t> lettersR_{255};
     std::atomic<uint16_t> lettersG_{255};
     std::atomic<uint16_t> lettersB_{255};
+    std::atomic<uint16_t> lettersMode_{255};
     std::atomic<uint16_t> festoonDim_{255};
     std::atomic<uint16_t> festoonR_{255};
     std::atomic<uint16_t> festoonG_{255};
     std::atomic<uint16_t> festoonB_{255};
-
-    std::array<std::atomic<uint8_t>, 9> rawLast_{};
+    std::atomic<uint16_t> festoonMode_{255};
 
     std::atomic<int> lettersStartChannel_{6001};
     std::atomic<int> lettersPixels_{149};
@@ -149,68 +146,20 @@ private:
     std::atomic<int> festoonPixels_{2000};
     std::atomic<int> festoonColorOrder_{0};
 
-    void captureControls(const uint8_t* data, const char* stage) {
+    void captureControls(const uint8_t* data) {
         const int controlBase0 = controlBaseChannel_.load(std::memory_order_relaxed) - 1;
 
-        const uint8_t vMaster = data[controlBase0 + 0];
-        const uint8_t vLettersDim = data[controlBase0 + 1];
-        const uint8_t vLettersR = data[controlBase0 + 2];
-        const uint8_t vLettersG = data[controlBase0 + 3];
-        const uint8_t vLettersB = data[controlBase0 + 4];
-        const uint8_t vFestoonDim = data[controlBase0 + 9];
-        const uint8_t vFestoonR = data[controlBase0 + 10];
-        const uint8_t vFestoonG = data[controlBase0 + 11];
-        const uint8_t vFestoonB = data[controlBase0 + 12];
-
-        const bool changed =
-            master_.load(std::memory_order_relaxed) != vMaster ||
-            lettersDim_.load(std::memory_order_relaxed) != vLettersDim ||
-            lettersR_.load(std::memory_order_relaxed) != vLettersR ||
-            lettersG_.load(std::memory_order_relaxed) != vLettersG ||
-            lettersB_.load(std::memory_order_relaxed) != vLettersB ||
-            festoonDim_.load(std::memory_order_relaxed) != vFestoonDim ||
-            festoonR_.load(std::memory_order_relaxed) != vFestoonR ||
-            festoonG_.load(std::memory_order_relaxed) != vFestoonG ||
-            festoonB_.load(std::memory_order_relaxed) != vFestoonB;
-
-        master_.store(vMaster, std::memory_order_relaxed);
-        lettersDim_.store(vLettersDim, std::memory_order_relaxed);
-        lettersR_.store(vLettersR, std::memory_order_relaxed);
-        lettersG_.store(vLettersG, std::memory_order_relaxed);
-        lettersB_.store(vLettersB, std::memory_order_relaxed);
-        festoonDim_.store(vFestoonDim, std::memory_order_relaxed);
-        festoonR_.store(vFestoonR, std::memory_order_relaxed);
-        festoonG_.store(vFestoonG, std::memory_order_relaxed);
-        festoonB_.store(vFestoonB, std::memory_order_relaxed);
-
-        if (changed) {
-            LogInfo(VB_PLUGIN,
-                    "APC controls [%s] playing=%d M=%u Ldim=%u Lrgb=%u/%u/%u Fdim=%u Frgb=%u/%u/%u\n",
-                    stage, Player::INSTANCE.IsPlaying(),
-                    vMaster, vLettersDim, vLettersR, vLettersG, vLettersB,
-                    vFestoonDim, vFestoonR, vFestoonG, vFestoonB);
-        }
-    }
-
-    void logRawControlsIfChanged(const uint8_t* data, const char* stage) {
-        const int base = controlBaseChannel_.load(std::memory_order_relaxed) - 1;
-        std::array<uint8_t, 9> current = {
-            data[base + 0], data[base + 1], data[base + 2], data[base + 3], data[base + 4],
-            data[base + 9], data[base + 10], data[base + 11], data[base + 12]
-        };
-        bool changed = false;
-        for (size_t i = 0; i < current.size(); ++i) {
-            if (rawLast_[i].exchange(current[i], std::memory_order_relaxed) != current[i]) {
-                changed = true;
-            }
-        }
-        if (changed) {
-            LogInfo(VB_PLUGIN,
-                    "APC raw [%s] playing=%d M=%u Ldim=%u Lrgb=%u/%u/%u Fdim=%u Frgb=%u/%u/%u\n",
-                    stage, Player::INSTANCE.IsPlaying(),
-                    current[0], current[1], current[2], current[3], current[4],
-                    current[5], current[6], current[7], current[8]);
-        }
+        master_.store(data[controlBase0 + 0], std::memory_order_relaxed);
+        lettersDim_.store(data[controlBase0 + 1], std::memory_order_relaxed);
+        lettersR_.store(data[controlBase0 + 2], std::memory_order_relaxed);
+        lettersG_.store(data[controlBase0 + 3], std::memory_order_relaxed);
+        lettersB_.store(data[controlBase0 + 4], std::memory_order_relaxed);
+        lettersMode_.store(data[controlBase0 + 5], std::memory_order_relaxed);
+        festoonDim_.store(data[controlBase0 + 9], std::memory_order_relaxed);
+        festoonR_.store(data[controlBase0 + 10], std::memory_order_relaxed);
+        festoonG_.store(data[controlBase0 + 11], std::memory_order_relaxed);
+        festoonB_.store(data[controlBase0 + 12], std::memory_order_relaxed);
+        festoonMode_.store(data[controlBase0 + 13], std::memory_order_relaxed);
     }
 
     static uint8_t scale8(uint16_t value, uint16_t level) {
@@ -238,37 +187,51 @@ private:
                              uint16_t redLevel,
                              uint16_t greenLevel,
                              uint16_t blueLevel,
+                             uint16_t colorMode,
                              uint16_t localDimmer,
                              uint16_t master,
-                             bool useSequenceMask) {
+                             bool sequencePlaying) {
         if (pixelCount <= 0) {
             return;
         }
 
         const int start0 = startChannel1 - 1;
         const auto offsets = colorOffsets(colorOrder);
+        const bool fullSequenceColour = sequencePlaying && colorMode < 128;
 
         for (int pixel = 0; pixel < pixelCount; ++pixel) {
             const int ch = start0 + (pixel * 3);
 
-            // When a sequence/player is active, preserve only the pixel's
-            // intensity. Using max(R,G,B) means fully saturated red, green,
-            // blue or white all represent 100% intensity. Sequence black is
-            // still black, so chases, twinkles and intentional blackouts work.
-            uint16_t patternLevel = 255;
-            if (useSequenceMask) {
+            uint16_t r;
+            uint16_t g;
+            uint16_t b;
+
+            if (fullSequenceColour) {
+                // FULL SEQUENCE COLOUR MODE: preserve the xLights/FPP RGB values
+                // exactly and ignore the Art-Net RGB colour sliders.
+                r = data[ch + offsets[0]];
+                g = data[ch + offsets[1]];
+                b = data[ch + offsets[2]];
+            } else if (sequencePlaying) {
+                // DESK COLOUR OVERRIDE MODE: preserve only the sequence pixel's
+                // intensity/pattern, then paint it with the current Art-Net RGB.
                 const uint16_t seqR = data[ch + offsets[0]];
                 const uint16_t seqG = data[ch + offsets[1]];
                 const uint16_t seqB = data[ch + offsets[2]];
-                patternLevel = std::max({seqR, seqG, seqB});
+                const uint16_t patternLevel = std::max({seqR, seqG, seqB});
+
+                r = scale8(redLevel,   patternLevel);
+                g = scale8(greenLevel, patternLevel);
+                b = scale8(blueLevel,  patternLevel);
+            } else {
+                // IDLE: there is no sequence colour/pattern to preserve, so the
+                // desk directly supplies a solid colour across the entire prop.
+                r = redLevel;
+                g = greenLevel;
+                b = blueLevel;
             }
 
-            // Art-Net owns the actual colour.
-            uint16_t r = scale8(redLevel,   patternLevel);
-            uint16_t g = scale8(greenLevel, patternLevel);
-            uint16_t b = scale8(blueLevel,  patternLevel);
-
-            // Per-prop dimmer comes after colour/pattern.
+            // Per-prop dimmer always applies in both colour modes.
             r = scale8(r, localDimmer);
             g = scale8(g, localDimmer);
             b = scale8(b, localDimmer);
@@ -283,7 +246,6 @@ private:
     void setDefaultSettings() {
         // Safe in-memory defaults if no plugin config file exists yet.
         if (settings.find("APCBypass") == settings.end()) settings["APCBypass"] = "1";
-        if (settings.find("APCUseSequencePattern") == settings.end()) settings["APCUseSequencePattern"] = "1";
         if (settings.find("APCControlBaseChannel") == settings.end()) settings["APCControlBaseChannel"] = "10001";
 
         if (settings.find("APCLettersStartChannel") == settings.end()) settings["APCLettersStartChannel"] = "6001";
@@ -333,11 +295,9 @@ private:
 
     void applySettings() {
         bypass_.store(settingBool("APCBypass", true), std::memory_order_relaxed);
-        useSequencePattern_.store(settingBool("APCUseSequencePattern", true), std::memory_order_relaxed);
-
-        // Thirteen consecutive control channels must fit in the FPP buffer.
+        // Fourteen consecutive control channels must fit in the FPP buffer.
         int controlBase = settingInt("APCControlBaseChannel", 10001);
-        controlBase = std::clamp(controlBase, 1, kMaxChannels - 12);
+        controlBase = std::clamp(controlBase, 1, kMaxChannels - 13);
         controlBaseChannel_.store(controlBase, std::memory_order_relaxed);
 
         const int lettersStart = clampStart(settingInt("APCLettersStartChannel", 6001));
