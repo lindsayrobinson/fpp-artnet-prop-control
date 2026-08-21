@@ -1,4 +1,4 @@
-# FPP Art-Net Prop Control
+# FPP Art-Net Prop Control — FPP 10
 
 A small native FPP ChannelDataPlugin for controlling two RGB pixel prop groups from a lighting console over Art-Net while FPP/xLights continues to generate the actual pixel effects.
 
@@ -78,7 +78,7 @@ Use FPP network output to send the finished pixel data to the Baldrick8, prefera
 
 ## Build / install
 
-This plugin is designed for FPP's native plugin build process.
+This plugin is designed specifically for **FPP 10's native plugin build process**.
 
 1. Put this directory in a Git repository named `fpp-artnet-prop-control`.
 2. Replace `YOUR-USERNAME` in `pluginInfo.json` with your GitHub username/organisation if hosting on GitHub.
@@ -100,4 +100,4 @@ If developing via SSH, the typical plugin directory is `/home/fpp/media/plugins/
 
 ## Status
 
-This is a custom **v0.1 / test build**. The source conditionally supports the FPP 9.5 plugin API and the newer FPP 10 plugin lifecycle API. Test with the Baldrick output brightness/current limited and Bypass available before using it in a live event.
+This is a custom **v0.2 / FPP 10 test build**. It targets the FPP 10 native plugin ABI and advertises its C++ library through `callbacks.sh --list`, allowing FPP 10 to load/reload it through the Plugin Manager. Test with the Baldrick output brightness/current limited and Bypass available before using it in a live event.

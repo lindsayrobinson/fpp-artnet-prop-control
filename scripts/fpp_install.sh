@@ -1,9 +1,12 @@
 #!/bin/bash
 set -e
 
+# Build against the headers and libfpp belonging to the FPP 10 installation
+# on this device. This is important because FPP 10 checks native-plugin ABI.
 BASEDIR="$(cd "$(dirname "$0")/.." && pwd)"
-FPPDIR="${FPPDIR:-/opt/fpp}"
-SRCDIR="${FPPDIR}/src"
+cd "$BASEDIR"
+make clean
+make
 
-make -C "$BASEDIR" clean
-make -C "$BASEDIR" "SRCDIR=${SRCDIR}"
+# No restartFlag is required. The plugin advertises c++ via callbacks.sh and
+# declares FPP_PLUGIN_SUPPORTS_UNLOAD(), so FPP 10 can load/reload it at runtime.
