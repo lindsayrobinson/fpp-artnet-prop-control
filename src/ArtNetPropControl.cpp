@@ -51,26 +51,40 @@ public:
 
     ~ArtNetPropControlPlugin() override = default;
 
+    // FPP merges live Art-Net/E1.31/DDP bridge data before this callback.
+    // Capture the control slots here so sequence playback cannot hide or
+    // replace them later in the processing pipeline.
+    void modifySequenceData(int /*ms*/, uint8_t* data) override {
+        if (data == nullptr || bypass_.load(std::memory_order_relaxed)) {
+            return;
+        }
+        captureControls(data);
+    }
+
     void modifyChannelData(int /*ms*/, uint8_t* data) override {
         if (data == nullptr || bypass_.load(std::memory_order_relaxed)) {
             return;
         }
 
-        const int controlBase1 = controlBaseChannel_.load(std::memory_order_relaxed);
-        const int controlBase0 = controlBase1 - 1;
+        // When idle there may not be a sequence-stage callback, so refresh
+        // directly from the channel buffer as a fallback. During playback the
+        // values below were latched in modifySequenceData() immediately after
+        // FPP merged the live bridge input.
+        if (!Player::INSTANCE.IsPlaying()) {
+            captureControls(data);
+        }
 
-        // Snapshot all DMX controls before modifying any pixel channels.
-        const uint16_t master = data[controlBase0 + 0];
+        const uint16_t master = master_.load(std::memory_order_relaxed);
 
-        const uint16_t lettersDim = data[controlBase0 + 1];
-        const uint16_t lettersR   = data[controlBase0 + 2];
-        const uint16_t lettersG   = data[controlBase0 + 3];
-        const uint16_t lettersB   = data[controlBase0 + 4];
+        const uint16_t lettersDim = lettersDim_.load(std::memory_order_relaxed);
+        const uint16_t lettersR   = lettersR_.load(std::memory_order_relaxed);
+        const uint16_t lettersG   = lettersG_.load(std::memory_order_relaxed);
+        const uint16_t lettersB   = lettersB_.load(std::memory_order_relaxed);
 
-        const uint16_t festoonDim = data[controlBase0 + 9];
-        const uint16_t festoonR   = data[controlBase0 + 10];
-        const uint16_t festoonG   = data[controlBase0 + 11];
-        const uint16_t festoonB   = data[controlBase0 + 12];
+        const uint16_t festoonDim = festoonDim_.load(std::memory_order_relaxed);
+        const uint16_t festoonR   = festoonR_.load(std::memory_order_relaxed);
+        const uint16_t festoonG   = festoonG_.load(std::memory_order_relaxed);
+        const uint16_t festoonB   = festoonB_.load(std::memory_order_relaxed);
 
         // When enabled, an active FPP player supplies only per-pixel intensity.
         // When idle, every pixel receives a full mask so Art-Net can light the
@@ -111,6 +125,18 @@ private:
     std::atomic<bool> useSequencePattern_{true};
     std::atomic<int> controlBaseChannel_{10001};
 
+    // Latched live control values. Neutral defaults make startup safe until the
+    // first Art-Net frame is merged and captured.
+    std::atomic<uint16_t> master_{255};
+    std::atomic<uint16_t> lettersDim_{255};
+    std::atomic<uint16_t> lettersR_{255};
+    std::atomic<uint16_t> lettersG_{255};
+    std::atomic<uint16_t> lettersB_{255};
+    std::atomic<uint16_t> festoonDim_{255};
+    std::atomic<uint16_t> festoonR_{255};
+    std::atomic<uint16_t> festoonG_{255};
+    std::atomic<uint16_t> festoonB_{255};
+
     std::atomic<int> lettersStartChannel_{6001};
     std::atomic<int> lettersPixels_{149};
     std::atomic<int> lettersColorOrder_{0};
@@ -118,6 +144,22 @@ private:
     std::atomic<int> festoonStartChannel_{1};
     std::atomic<int> festoonPixels_{2000};
     std::atomic<int> festoonColorOrder_{0};
+
+    void captureControls(const uint8_t* data) {
+        const int controlBase0 = controlBaseChannel_.load(std::memory_order_relaxed) - 1;
+
+        master_.store(data[controlBase0 + 0], std::memory_order_relaxed);
+
+        lettersDim_.store(data[controlBase0 + 1], std::memory_order_relaxed);
+        lettersR_.store(data[controlBase0 + 2], std::memory_order_relaxed);
+        lettersG_.store(data[controlBase0 + 3], std::memory_order_relaxed);
+        lettersB_.store(data[controlBase0 + 4], std::memory_order_relaxed);
+
+        festoonDim_.store(data[controlBase0 + 9], std::memory_order_relaxed);
+        festoonR_.store(data[controlBase0 + 10], std::memory_order_relaxed);
+        festoonG_.store(data[controlBase0 + 11], std::memory_order_relaxed);
+        festoonB_.store(data[controlBase0 + 12], std::memory_order_relaxed);
+    }
 
     static uint8_t scale8(uint16_t value, uint16_t level) {
         // Rounded 8-bit multiply: 255 leaves the source unchanged.

@@ -2,6 +2,13 @@
 
 A native FPP 10 `ChannelDataPlugin` for controlling two RGB pixel prop groups from a lighting console over Art-Net while optionally preserving xLights/FPP sequence patterns.
 
+
+## v0.6 live-control fix
+
+FPP merges live Art-Net/E1.31/DDP bridge data before the `modifySequenceData()` plugin callback. v0.6 latches the nine active control values at that early stage and then uses the latched values in `modifyChannelData()` immediately before output. This is intended to make RGB, local dimmers and the global master react during an active sequence rather than only after playback stops.
+
+When FPP is idle, the plugin still refreshes the controls directly from the channel buffer so solid-colour desk control continues to work without a sequence.
+
 ## Operating behaviour
 
 With **Use sequence as pattern mask** enabled (the default):
