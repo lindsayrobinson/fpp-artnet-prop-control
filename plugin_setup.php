@@ -9,11 +9,16 @@ PrintSettingGroup("APCFestoon", "", "", 1, "fpp-artnet-prop-control");
   <strong>Art-Net slots:</strong>
   1 Master; 2 Letters Brightness; 3 Letters Red; 4 Letters Green; 5 Letters Blue;
   6-9 spare; 10 Festoon Brightness; 11 Festoon Red; 12 Festoon Green; 13 Festoon Blue.
-  Set all active controls to 255 for a neutral/unmodified result.
+</div>
+
+<div class="alert alert-success" role="alert">
+  <strong>Sequence pattern mode:</strong> when enabled and FPP is playing, the sequence supplies only
+  each pixel's intensity/pattern. Art-Net supplies the actual colour. When FPP is idle, the whole prop
+  displays the Art-Net-selected colour. Prop brightness is applied next and Master is always applied last.
 </div>
 
 <div class="alert alert-warning" role="alert">
-  Keep the FPP control channel range separate from the pixel channel ranges. RGB controls are filters:
-  they scale colours already present in the FPP sequence; they do not create a missing colour component.
+  Keep FPP channels 10001-10013 (or your configured control block) separate from the prop pixel ranges.
+  A sequence's original hue is intentionally discarded; only its per-pixel brightness pattern is retained.
 </div>
 </div>

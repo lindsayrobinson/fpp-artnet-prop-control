@@ -2,7 +2,7 @@
   "repoName": "fpp-artnet-prop-control",
   "name": "Art-Net Prop Control",
   "author": "lindsayrobinson",
-  "description": "FPP 10 ChannelDataPlugin applying Art-Net RGB filters, local prop dimmers, and a final global master dimmer to configured RGB pixel ranges.",
+  "description": "FPP 10 Art-Net controller for Letters and Festoon: desk-controlled RGB colour and local dimmers, optional xLights/FPP per-pixel pattern mask, idle solid-colour output, and a final global master dimmer.",
   "homeURL": "https://github.com/lindsayrobinson/fpp-artnet-prop-control",
   "srcURL": "https://github.com/lindsayrobinson/fpp-artnet-prop-control.git",
   "bugURL": "https://github.com/lindsayrobinson/fpp-artnet-prop-control/issues",

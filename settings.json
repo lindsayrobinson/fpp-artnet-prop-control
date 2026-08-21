@@ -4,11 +4,12 @@
       "description": "Art-Net Prop Control",
       "settings": [
         "APCBypass",
+        "APCUseSequencePattern",
         "APCControlBaseChannel"
       ]
     },
     "APCLetters": {
-      "description": "Letters — Art-Net slots 2 brightness, 3 red, 4 green, 5 blue",
+      "description": "Letters \u2014 Art-Net slots 2 brightness, 3 red, 4 green, 5 blue",
       "settings": [
         "APCLettersStartChannel",
         "APCLettersPixels",
@@ -16,7 +17,7 @@
       ]
     },
     "APCFestoon": {
-      "description": "Festoon — Art-Net slots 10 brightness, 11 red, 12 green, 13 blue",
+      "description": "Festoon \u2014 Art-Net slots 10 brightness, 11 red, 12 green, 13 blue",
       "settings": [
         "APCFestoonStartChannel",
         "APCFestoonPixels",
@@ -29,6 +30,15 @@
       "name": "APCBypass",
       "description": "Bypass processing",
       "tip": "When enabled, leave all pixel data untouched. This defaults ON for a safe first install.",
+      "type": "checkbox",
+      "default": 1,
+      "restart": 0,
+      "reboot": 0
+    },
+    "APCUseSequencePattern": {
+      "name": "APCUseSequencePattern",
+      "description": "Use sequence as pattern mask",
+      "tip": "When enabled, an active FPP sequence supplies per-pixel intensity/pattern while Art-Net supplies colour. When FPP is idle, the entire prop uses the Art-Net colour.",
       "type": "checkbox",
       "default": 1,
       "restart": 0,

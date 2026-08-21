@@ -8,15 +8,23 @@
 #include <string>
 
 #include "Plugin.h"
+#include "Player.h"
 #include "Sequence.h"
 #include "log.h"
 
 // FPP 10 native ChannelDataPlugin.
 //
 // Processing order for each RGB pixel:
-//   1. Per-prop R/G/B filter
-//   2. Per-prop dimmer
-//   3. Global master dimmer (ALWAYS LAST)
+//   1. If FPP is playing, derive a brightness mask from the existing sequence
+//      pixel using max(R,G,B). This preserves patterns/fades while discarding
+//      the sequence hue. If FPP is idle, use a full (255) mask so the desk can
+//      light the entire prop without a sequence.
+//   2. Generate the pixel colour from the Art-Net R/G/B controls and mask it.
+//   3. Apply the per-prop dimmer.
+//   4. Apply the global master dimmer (ALWAYS LAST).
+//
+// The lighting desk therefore owns colour at all times, while an active sequence
+// can still own per-pixel pattern/intensity.
 //
 // Art-Net slots are expected to be mapped consecutively into FPP starting at
 // APCControlBaseChannel (default FPP channel 10001):
@@ -64,19 +72,25 @@ public:
         const uint16_t festoonG   = data[controlBase0 + 11];
         const uint16_t festoonB   = data[controlBase0 + 12];
 
+        // When enabled, an active FPP player supplies only per-pixel intensity.
+        // When idle, every pixel receives a full mask so Art-Net can light the
+        // props with no sequence running.
+        const bool useSequenceMask = useSequencePattern_.load(std::memory_order_relaxed) &&
+                                     Player::INSTANCE.IsPlaying();
+
         processGroup(data,
                      lettersStartChannel_.load(std::memory_order_relaxed),
                      lettersPixels_.load(std::memory_order_relaxed),
                      lettersColorOrder_.load(std::memory_order_relaxed),
                      lettersR, lettersG, lettersB,
-                     lettersDim, master);
+                     lettersDim, master, useSequenceMask);
 
         processGroup(data,
                      festoonStartChannel_.load(std::memory_order_relaxed),
                      festoonPixels_.load(std::memory_order_relaxed),
                      festoonColorOrder_.load(std::memory_order_relaxed),
                      festoonR, festoonG, festoonB,
-                     festoonDim, master);
+                     festoonDim, master, useSequenceMask);
     }
 
     std::function<bool()> shutdown() override {
@@ -94,6 +108,7 @@ private:
     static constexpr int kMaxChannels = FPPD_MAX_CHANNELS;
 
     std::atomic<bool> bypass_{true};
+    std::atomic<bool> useSequencePattern_{true};
     std::atomic<int> controlBaseChannel_{10001};
 
     std::atomic<int> lettersStartChannel_{6001};
@@ -130,7 +145,8 @@ private:
                              uint16_t greenLevel,
                              uint16_t blueLevel,
                              uint16_t localDimmer,
-                             uint16_t master) {
+                             uint16_t master,
+                             bool useSequenceMask) {
         if (pixelCount <= 0) {
             return;
         }
@@ -141,17 +157,29 @@ private:
         for (int pixel = 0; pixel < pixelCount; ++pixel) {
             const int ch = start0 + (pixel * 3);
 
-            // 1. RGB colour filtering.
-            uint16_t r = scale8(data[ch + offsets[0]], redLevel);
-            uint16_t g = scale8(data[ch + offsets[1]], greenLevel);
-            uint16_t b = scale8(data[ch + offsets[2]], blueLevel);
+            // When a sequence/player is active, preserve only the pixel's
+            // intensity. Using max(R,G,B) means fully saturated red, green,
+            // blue or white all represent 100% intensity. Sequence black is
+            // still black, so chases, twinkles and intentional blackouts work.
+            uint16_t patternLevel = 255;
+            if (useSequenceMask) {
+                const uint16_t seqR = data[ch + offsets[0]];
+                const uint16_t seqG = data[ch + offsets[1]];
+                const uint16_t seqB = data[ch + offsets[2]];
+                patternLevel = std::max({seqR, seqG, seqB});
+            }
 
-            // 2. Local prop dimmer.
+            // Art-Net owns the actual colour.
+            uint16_t r = scale8(redLevel,   patternLevel);
+            uint16_t g = scale8(greenLevel, patternLevel);
+            uint16_t b = scale8(blueLevel,  patternLevel);
+
+            // Per-prop dimmer comes after colour/pattern.
             r = scale8(r, localDimmer);
             g = scale8(g, localDimmer);
             b = scale8(b, localDimmer);
 
-            // 3. GLOBAL MASTER -- deliberately the final operation.
+            // GLOBAL MASTER -- deliberately and explicitly the final step.
             data[ch + offsets[0]] = scale8(r, master);
             data[ch + offsets[1]] = scale8(g, master);
             data[ch + offsets[2]] = scale8(b, master);
@@ -161,6 +189,7 @@ private:
     void setDefaultSettings() {
         // Safe in-memory defaults if no plugin config file exists yet.
         if (settings.find("APCBypass") == settings.end()) settings["APCBypass"] = "1";
+        if (settings.find("APCUseSequencePattern") == settings.end()) settings["APCUseSequencePattern"] = "1";
         if (settings.find("APCControlBaseChannel") == settings.end()) settings["APCControlBaseChannel"] = "10001";
 
         if (settings.find("APCLettersStartChannel") == settings.end()) settings["APCLettersStartChannel"] = "6001";
@@ -210,6 +239,7 @@ private:
 
     void applySettings() {
         bypass_.store(settingBool("APCBypass", true), std::memory_order_relaxed);
+        useSequencePattern_.store(settingBool("APCUseSequencePattern", true), std::memory_order_relaxed);
 
         // Thirteen consecutive control channels must fit in the FPP buffer.
         int controlBase = settingInt("APCControlBaseChannel", 10001);
