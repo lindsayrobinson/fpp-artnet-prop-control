@@ -1,0 +1,25 @@
+{
+  "repoName": "fpp-artnet-prop-control",
+  "name": "Art-Net Prop Control",
+  "author": "Custom",
+  "description": "Applies Art-Net-controlled RGB filtering, local prop dimming, and a final master dimmer to configured RGB pixel ranges.",
+  "homeURL": "https://github.com/YOUR-USERNAME/fpp-artnet-prop-control",
+  "srcURL": "https://github.com/YOUR-USERNAME/fpp-artnet-prop-control.git",
+  "bugURL": "https://github.com/YOUR-USERNAME/fpp-artnet-prop-control/issues",
+  "versions": [
+    {
+      "minFPPVersion": "9.0",
+      "maxFPPVersion": "9.99",
+      "branch": "main",
+      "sha": "",
+      "allowUpdates": 1
+    },
+    {
+      "minFPPVersion": "10.0",
+      "maxFPPVersion": "0",
+      "branch": "main",
+      "sha": "",
+      "allowUpdates": 1
+    }
+  ]
+}
